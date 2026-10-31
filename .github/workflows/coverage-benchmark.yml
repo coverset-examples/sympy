@@ -1,0 +1,65 @@
+# Times SymPy's own Tests job (Python 3.14, `pytest -n auto`, from sympy/sympy's runtests.yml) on
+# GitHub's runners, without coverage and with pytest-cov, so a Coverset run of the same commit has a
+# fair baseline: SymPy's CI measures no coverage. Coverset's plugin joins once it is published.
+#
+# Every mode uses `--timeout 120` instead of SymPy's 10: coverage slows some tests past 10 s, and a
+# test cut short would make a mode look faster than it is. Each mode runs three times, on the same
+# commit, to show how much GitHub's shared runners vary.
+name: coverage benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: sympy/sympy commit, branch or tag to test
+        default: master
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [plain, cov, cov-contexts]
+        repeat: [1, 2, 3]
+    name: ${{ matrix.mode }} ${{ matrix.repeat }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: sympy/sympy
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements-dev.txt
+      - if: matrix.mode != 'plain'
+        run: pip install pytest-cov
+      - name: pytest
+        shell: bash  # -o pipefail: the step fails with pytest, not with tee
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          case "$MODE" in
+            plain) cov=() ;;
+            cov) cov=(--cov=sympy --cov-branch --cov-report=) ;;
+            cov-contexts) cov=(--cov=sympy --cov-branch --cov-context=test --cov-report=) ;;
+          esac
+          start=$(date +%s)
+          status=0
+          pytest -n auto --timeout 120 --durations=20 --durations-min=5 "${cov[@]}" | tee pytest.log || status=$?
+          seconds=$(( $(date +%s) - start ))
+          {
+            echo "### $MODE: ${seconds} s"
+            echo
+            echo "commit $(git rev-parse HEAD), $(nproc) CPUs, $(python -VV)"
+            echo
+            pip list 2>/dev/null | grep -iE '^(pytest|pytest-cov|pytest-xdist|coverage) ' | sed 's/^/    /'
+            echo
+            tail -n 1 pytest.log | sed 's/^/    /'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
