@@ -2,7 +2,8 @@
 # GitHub's runners, without coverage and with pytest-cov, so a Coverset run of the same commit has a
 # fair baseline: SymPy's CI measures no coverage. Coverset's plugin joins once it is published.
 #
-# Every mode uses `--timeout 120` instead of SymPy's 10: coverage slows some tests past 10 s, and a
+# cov-contexts records which test ran each line, as Coverset does, with the ctrace core (3.14's
+# default core, sysmon, has no per-test contexts). Every mode uses `--timeout 120` instead of SymPy's 10: coverage slows some tests past 10 s, and a
 # test cut short would make a mode look faster than it is. Each mode runs three times, on the same
 # commit, to show how much GitHub's shared runners vary.
 name: coverage benchmark
@@ -13,6 +14,9 @@ on:
       ref:
         description: sympy/sympy commit, branch or tag to test
         default: master
+      modes:
+        description: the modes to run, a JSON list
+        default: '["plain", "cov", "cov-contexts"]'
 
 permissions:
   contents: read
@@ -23,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [plain, cov, cov-contexts]
+        mode: ${{ fromJSON(inputs.modes) }}
         repeat: [1, 2, 3]
     name: ${{ matrix.mode }} ${{ matrix.repeat }}
     steps:
@@ -47,7 +51,8 @@ jobs:
           case "$MODE" in
             plain) cov=() ;;
             cov) cov=(--cov=sympy --cov-branch --cov-report=) ;;
-            cov-contexts) cov=(--cov=sympy --cov-branch --cov-context=test --cov-report=) ;;
+            # Per-test contexts need the ctrace core: Python 3.14's default, sysmon, has no dynamic contexts.
+            cov-contexts) export COVERAGE_CORE=ctrace; cov=(--cov=sympy --cov-branch --cov-context=test --cov-report=) ;;
           esac
           start=$(date +%s)
           status=0
